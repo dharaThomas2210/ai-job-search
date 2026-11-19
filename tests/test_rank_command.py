@@ -306,6 +306,40 @@ class RankCommandSpec(unittest.TestCase):
             "Step 4 must call out that the veto fields (location/language_gate/language_note) are not optional extras",
         )
 
+    def test_eligibility_gate_is_wired_through_every_step(self):
+        """The Eligibility Gate in 04-job-evaluation.md was never applied by /rank:
+        the scorer contract carried no verdict and Step 3 vetoed only on location
+        and language, so "no sponsorship" postings could reach the shortlist."""
+        sections = _sections(COMMAND.read_text(encoding="utf-8"))
+        step1 = sections.get("Step 1: Load State", "")
+        self.assertIn("Work authorization", step1, "Step 1 must check the profile's Work authorization line")
+        self.assertIn("[YOUR_WORK_AUTHORIZATION]", step1, "Step 1 must treat the placeholder as missing")
+        step2 = sections.get("Step 2: Batch-Fetch and Score", "")
+        self.assertIn('"eligibility_gate": "PASS" | "FAIL" | "UNVERIFIED"', step2)
+        self.assertIn('"eligibility_note"', step2)
+        self.assertIn("Work authorization", step2, "the rubric must carry the Work authorization line inline")
+        step3 = sections.get("Step 3: Aggregate and Rank", "")
+        self.assertIn("Eligibility veto", step3)
+        self.assertIn("eligibility_note", step3)
+        step4 = sections.get("Step 4: Update State", "")
+        self.assertIn('"eligibility_gate"', step4)
+        self.assertIn('"eligibility_note"', step4)
+        self.assertIn("eligibility FAIL", COMMAND.read_text(encoding="utf-8"), "Step 5's Excluded list shows it")
+        scraper = SCRAPER_SKILL.read_text(encoding="utf-8")
+        for field in ("eligibility_gate", "eligibility_note"):
+            self.assertIn(field, scraper, f"the seen_jobs schema note must enumerate {field}")
+        scorer = (REPO / ".claude" / "agents" / "posting-scorer.md").read_text(encoding="utf-8")
+        self.assertIn("eligibility_gate", scorer)
+        self.assertIn("UNVERIFIED", scorer)
+
+    def test_eligibility_verdicts_match_the_state_helper(self):
+        spec = importlib.util.spec_from_file_location("rank_state", REPO / "tools" / "rank_state.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        step2 = _sections(COMMAND.read_text(encoding="utf-8"))["Step 2: Batch-Fetch and Score"]
+        contract = " | ".join(f'"{v}"' for v in module.ELIGIBILITY_VERDICTS)
+        self.assertIn(f'"eligibility_gate": {contract}', step2)
+
     def test_step4_persists_deadline(self):
         """Sibling of test_step4_persists_language_gate_and_language_note: the deadline was
         computed in Step 2 and acted on in Step 3, but never written to seen_jobs.json, so

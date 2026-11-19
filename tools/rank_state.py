@@ -65,9 +65,16 @@ ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # names exactly these, so the spec and the tool cannot drift apart.
 AGENT_STATUSES = ("scored", "expired", "unreachable")
 
-# The values the two veto gates may take (rank.md Step 2). Step 5's veto is an
+# The values the location and language gates may take (rank.md Step 2). Step 5's veto is an
 # exact match on "FAIL", so any other spelling would shortlist a deal-breaker.
 GATE_VERDICTS = ("PASS", "FAIL", "FLAG")
+
+# The values the Eligibility Gate may take (rank.md Step 2, 04-job-evaluation.md).
+# A different set from GATE_VERDICTS: a posting silent on work authorization is
+# UNVERIFIED, not FLAG. FAIL is a veto like the other two gates. A result that
+# omits the field (an agent on an older prompt) stores UNVERIFIED, never PASS:
+# nothing was checked, and silence is not permission.
+ELIGIBILITY_VERDICTS = ("PASS", "FAIL", "UNVERIFIED")
 
 # A posting that could not be fetched is `unreachable`, not `expired`, and is
 # retried on later runs (#534). It gives up to `expired` only after this many
@@ -412,6 +419,16 @@ def cmd_apply(args) -> int:
                 {"key": key, "error": f"unknown {bad_gate} {result[bad_gate]!r}; expected one of {', '.join(GATE_VERDICTS)}"}
             )
             continue
+        eligibility = result.get("eligibility_gate")
+        if eligibility and eligibility not in ELIGIBILITY_VERDICTS:
+            errors.append(
+                {
+                    "key": key,
+                    "error": f"unknown eligibility_gate {eligibility!r}; "
+                    f"expected one of {', '.join(ELIGIBILITY_VERDICTS)}",
+                }
+            )
+            continue
 
         # A missing deadline from the fresh fetch is not a correction to the
         # stored date. Scored keys are excluded from the later sweep, so apply
@@ -443,6 +460,16 @@ def cmd_apply(args) -> int:
             entry.pop("language_note", None)
         else:
             entry["language_note"] = result.get("language_note")
+        # The note is the posting's own wording: the requirement behind a FAIL,
+        # or the "we sponsor" line behind a PASS. UNVERIFIED means the posting
+        # was silent, so there is nothing to quote, and a stale note from an
+        # earlier run would misstate this fetch.
+        entry["eligibility_gate"] = eligibility or "UNVERIFIED"
+        note = result.get("eligibility_note")
+        if entry["eligibility_gate"] != "UNVERIFIED" and isinstance(note, str) and note.strip():
+            entry["eligibility_note"] = note.strip()[:FETCH_ERROR_MAX]
+        else:
+            entry.pop("eligibility_note", None)
         # Absence is not a correction: a fetch that degraded to a listing page
         # returns no deadline, and blanking a stored one would erase a real
         # date and make the entry immortal to rule 6's sweep.
@@ -483,6 +510,8 @@ def cmd_apply(args) -> int:
                 "location_verdict": entry["location_verdict"],
                 "language_gate": entry["language_gate"],
                 "language_note": entry.get("language_note"),
+                "eligibility_gate": entry["eligibility_gate"],
+                "eligibility_note": entry.get("eligibility_note"),
                 "deadline": entry.get("deadline"),
                 "posted_date": entry.get("posted_date"),
                 "urgent": bool(parsed and today <= parsed <= today + timedelta(days=URGENT_DAYS)),
@@ -496,7 +525,7 @@ def cmd_apply(args) -> int:
         save_state(args.state, doc)
 
     rows.sort(key=lambda r: (r["score"], r["urgent"]), reverse=True)
-    veto = lambda r: r["location_verdict"] == "FAIL" or r["language_gate"] == "FAIL"
+    veto = lambda r: "FAIL" in (r["location_verdict"], r["language_gate"], r["eligibility_gate"])
     vetoed = [r for r in rows if veto(r)]
     ranked = [r for r in rows if not veto(r)]
     print(

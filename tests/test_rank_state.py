@@ -533,6 +533,60 @@ class Apply(RankStateCase):
         self.assertEqual([r["key"] for r in out["ranked"]], ["c"])
         self.assertEqual(self.read_state()["b"]["language_note"], "requires fluent Polish")
 
+    def test_eligibility_fail_is_vetoed_and_its_quote_persisted(self):
+        self.write_state({"a": entry(), "b": entry(), "c": entry()})
+        scores = {"technical": 90, "experience": 90, "behavioral": 90, "career": 90}
+        out = self.run_tool(
+            "apply",
+            "--results",
+            self.results(
+                [
+                    {"key": "a", "status": "scored", "scores": scores, "eligibility_gate": "FAIL",
+                     "eligibility_note": "Applicants must be authorized to work without sponsorship"},
+                    {"key": "b", "status": "scored", "scores": scores, "eligibility_gate": "UNVERIFIED"},
+                    {"key": "c", "status": "scored", "scores": scores, "eligibility_gate": "PASS",
+                     "eligibility_note": "We sponsor H-1B visas"},
+                ]
+            ),
+        )
+        self.assertEqual([r["key"] for r in out["vetoed"]], ["a"], "a 90-point eligibility FAIL is excluded")
+        self.assertEqual(sorted(r["key"] for r in out["ranked"]), ["b", "c"])
+        self.assertEqual(out["vetoed"][0]["eligibility_note"], "Applicants must be authorized to work without sponsorship")
+        state = self.read_state()
+        self.assertEqual(state["a"]["eligibility_gate"], "FAIL")
+        self.assertEqual(state["a"]["eligibility_note"], "Applicants must be authorized to work without sponsorship")
+        self.assertEqual(state["b"]["eligibility_gate"], "UNVERIFIED")
+        self.assertNotIn("eligibility_note", state["b"])
+        self.assertEqual(state["c"]["eligibility_note"], "We sponsor H-1B visas")
+
+    def test_missing_eligibility_gate_stores_unverified_not_pass(self):
+        """Silence is not permission: a result without the field (an agent on an
+        older prompt) must not record a verified PASS."""
+        self.write_state({"a": entry(eligibility_note="stale quote from a prior run")})
+        out = self.run_tool(
+            "apply",
+            "--results",
+            self.results(
+                [{"key": "a", "status": "scored",
+                  "scores": {"technical": 50, "experience": 50, "behavioral": 50, "career": 50}}]
+            ),
+        )
+        self.assertEqual(out["ranked"][0]["eligibility_gate"], "UNVERIFIED")
+        state = self.read_state()["a"]
+        self.assertEqual(state["eligibility_gate"], "UNVERIFIED")
+        self.assertNotIn("eligibility_note", state, "a stale quote must not survive a fetch that found none")
+
+    def test_unknown_eligibility_verdict_is_an_error(self):
+        scores = {dimension: 90 for dimension in ("technical", "experience", "behavioral", "career")}
+        for value in ("FLAG", "fail", "NO_SPONSORSHIP"):
+            with self.subTest(value=value):
+                self.write_state({"a": entry()})
+                result = {"key": "a", "status": "scored", "scores": scores, "eligibility_gate": value}
+                out = self.run_tool("apply", "--results", self.results([result]), expect=1)
+                self.assertEqual(out["ranked"], [])
+                self.assertIn(f"unknown eligibility_gate {value!r}", out["errors"][0]["error"])
+                self.assertEqual(self.read_state()["a"]["status"], "new")
+
     def test_language_note_is_dropped_when_gate_passes(self):
         self.write_state({"a": entry(language_note="stale note from a prior run")})
         self.run_tool(
