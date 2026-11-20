@@ -71,10 +71,12 @@ GATE_VERDICTS = ("PASS", "FAIL", "FLAG")
 
 # The values the Eligibility Gate may take (rank.md Step 2, 04-job-evaluation.md).
 # A different set from GATE_VERDICTS: a posting silent on work authorization is
-# UNVERIFIED, not FLAG. FAIL is a veto like the other two gates. The gate runs
-# only for a candidate who is not a citizen or permanent resident (rank.md
-# Step 1), so a result that omits the field means the gate was off: nothing is
-# stored, and the job carries no eligibility veto or marker.
+# UNVERIFIED, not FLAG. FAIL is a veto like the other two gates. The gate is
+# decided per posting from the Work authorization entry for the posting's
+# country (rank.md Step 1): a citizen or permanent-resident entry for that
+# country skips it. A result that omits the field means the gate did not apply
+# to that posting: nothing is stored, and the job carries no eligibility veto
+# or marker, even when other jobs in the same batch were gated.
 ELIGIBILITY_VERDICTS = ("PASS", "FAIL", "UNVERIFIED")
 
 # A posting that could not be fetched is `unreachable`, not `expired`, and is
@@ -461,9 +463,10 @@ def cmd_apply(args) -> int:
             entry.pop("language_note", None)
         else:
             entry["language_note"] = result.get("language_note")
-        # No verdict means the gate was off for this candidate (a citizen or
-        # permanent resident): drop any verdict from an earlier run rather than
-        # carry it forward. The note is the posting's own wording: the
+        # No verdict means the gate did not apply to this posting (the candidate
+        # is a citizen or permanent resident of its country): drop any verdict
+        # from an earlier run rather than carry it forward. The note is the
+        # posting's own wording: the
         # requirement behind a FAIL, or the "we sponsor" line behind a PASS.
         # UNVERIFIED means the posting was silent, so there is nothing to quote.
         note = result.get("eligibility_note")

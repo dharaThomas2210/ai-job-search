@@ -579,6 +579,33 @@ class Apply(RankStateCase):
         self.assertNotIn("eligibility_gate", state)
         self.assertNotIn("eligibility_note", state)
 
+    def test_mixed_country_profile_gates_each_posting_on_its_own(self):
+        """Profile "Country A: citizen; Country B: requires visa sponsorship": the
+        scorer skips the gate for the Country A posting (no fields) and runs it
+        for the Country B ones. One batch carries both shapes, and each job is
+        vetoed, marked or left alone on its own result alone."""
+        self.write_state({"home": entry(eligibility_gate="UNVERIFIED"), "abroad_fail": entry(), "abroad_silent": entry()})
+        scores = {"technical": 80, "experience": 80, "behavioral": 80, "career": 80}
+        out = self.run_tool(
+            "apply",
+            "--results",
+            self.results(
+                [
+                    {"key": "home", "status": "scored", "scores": scores},
+                    {"key": "abroad_fail", "status": "scored", "scores": scores, "eligibility_gate": "FAIL",
+                     "eligibility_note": "Must be authorized to work in Country B without sponsorship"},
+                    {"key": "abroad_silent", "status": "scored", "scores": scores, "eligibility_gate": "UNVERIFIED"},
+                ]
+            ),
+        )
+        self.assertEqual([r["key"] for r in out["vetoed"]], ["abroad_fail"])
+        ranked = {r["key"]: r["eligibility_gate"] for r in out["ranked"]}
+        self.assertEqual(ranked, {"home": None, "abroad_silent": "UNVERIFIED"})
+        state = self.read_state()
+        self.assertNotIn("eligibility_gate", state["home"], "a citizen-country posting carries no verdict")
+        self.assertEqual(state["abroad_fail"]["eligibility_gate"], "FAIL")
+        self.assertEqual(state["abroad_silent"]["eligibility_gate"], "UNVERIFIED")
+
     def test_unknown_eligibility_verdict_is_an_error(self):
         scores = {dimension: 90 for dimension in ("technical", "experience", "behavioral", "career")}
         for value in ("FLAG", "fail", "NO_SPONSORSHIP"):
