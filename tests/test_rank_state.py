@@ -559,22 +559,25 @@ class Apply(RankStateCase):
         self.assertNotIn("eligibility_note", state["b"])
         self.assertEqual(state["c"]["eligibility_note"], "We sponsor H-1B visas")
 
-    def test_missing_eligibility_gate_stores_unverified_not_pass(self):
-        """Silence is not permission: a result without the field (an agent on an
-        older prompt) must not record a verified PASS."""
-        self.write_state({"a": entry(eligibility_note="stale quote from a prior run")})
+    def test_gate_off_stores_no_eligibility_fields_and_no_veto(self):
+        """A citizen or permanent resident gets no eligibility check (rank.md
+        Step 1), so the scorers omit the field: nothing is stored, nothing is
+        vetoed, and a verdict from an earlier run is dropped, not carried on."""
+        self.write_state({"a": entry(eligibility_gate="FAIL", eligibility_note="stale quote from a prior run")})
         out = self.run_tool(
             "apply",
             "--results",
             self.results(
                 [{"key": "a", "status": "scored",
-                  "scores": {"technical": 50, "experience": 50, "behavioral": 50, "career": 50}}]
+                  "scores": {"technical": 90, "experience": 90, "behavioral": 90, "career": 90}}]
             ),
         )
-        self.assertEqual(out["ranked"][0]["eligibility_gate"], "UNVERIFIED")
+        self.assertEqual([r["key"] for r in out["ranked"]], ["a"], "no gate, no veto")
+        self.assertEqual(out["vetoed"], [])
+        self.assertIsNone(out["ranked"][0]["eligibility_gate"], "no UNVERIFIED marker for a skipped gate")
         state = self.read_state()["a"]
-        self.assertEqual(state["eligibility_gate"], "UNVERIFIED")
-        self.assertNotIn("eligibility_note", state, "a stale quote must not survive a fetch that found none")
+        self.assertNotIn("eligibility_gate", state)
+        self.assertNotIn("eligibility_note", state)
 
     def test_unknown_eligibility_verdict_is_an_error(self):
         scores = {dimension: 90 for dimension in ("technical", "experience", "behavioral", "career")}

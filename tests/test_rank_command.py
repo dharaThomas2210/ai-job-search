@@ -332,6 +332,25 @@ class RankCommandSpec(unittest.TestCase):
         self.assertIn("eligibility_gate", scorer)
         self.assertIn("UNVERIFIED", scorer)
 
+    def test_eligibility_gate_is_skipped_for_citizens(self):
+        """Citizens and permanent residents get no eligibility check at all, and an
+        older profile without the line is not prompted for it; only the
+        placeholder triggers a question (matches 04-job-evaluation.md)."""
+        sections = _sections(COMMAND.read_text(encoding="utf-8"))
+        step1 = sections["Step 1: Load State"]
+        self.assertIn("**Citizen or permanent resident**", step1)
+        self.assertIn("the gate is **off**", step1)
+        self.assertIn("**Line absent**", step1)
+        self.assertIn("without asking", step1)
+        self.assertIn("ask the user once", step1)
+        step2 = sections["Step 2: Batch-Fetch and Score"]
+        self.assertIn("Only when Step 1 turned the Eligibility Gate on", step2)
+        self.assertIn("the prompt says nothing about eligibility", step2)
+        step3 = sections["Step 3: Aggregate and Rank"]
+        self.assertIn("only when Step 1 turned the gate on", step3)
+        scorer = (REPO / ".claude" / "agents" / "posting-scorer.md").read_text(encoding="utf-8")
+        self.assertIn("otherwise omit both eligibility fields", scorer)
+
     def test_eligibility_verdicts_match_the_state_helper(self):
         spec = importlib.util.spec_from_file_location("rank_state", REPO / "tools" / "rank_state.py")
         module = importlib.util.module_from_spec(spec)
